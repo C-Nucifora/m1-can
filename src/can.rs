@@ -12,7 +12,7 @@
 //!
 //! This module reconstructs that picture for an agent: every DBC module with
 //! its `Init` call sites and bus argument, every message with its id and
-//! resolved bus, and every repeated id classified as `same-bus` (a real clash),
+//! resolved bus, and every repeated id classified as `same-bus` (shared frame identity requiring review),
 //! `different-bus` (provably fine) or `unknown` (the bus argument is not a
 //! static value — typically a calibratable Parameter — so nothing can be
 //! proven either way).
@@ -37,12 +37,12 @@ const GUIDANCE: [&str; 7] = [
     "A `.m1dbc` has no CAN bus of its own: a script must bind it with `DBC.<Name>.Init(<bus>)` \
      (conventionally one `CAN Init` script). A DBC that is used but never initialised is M1 Build \
      Error 1375 (m1-typecheck T107).",
-    "CAN identifiers are per bus. Two messages sharing an id do NOT conflict when their modules \
+    "CAN identifiers are per bus and frame format. Two messages sharing an id do NOT conflict when their modules \
      were initialised on different buses — check `bus`/`bus_value` before ever reporting a clash.",
     "A bus argument that names a symbol is resolved to a number where the project knows one: a \
      constant's `.m1prj` `Value`, or a parameter's cell in `parameters.m1cfg`. That number is in \
      `bus_value`.",
-    "`verdict: \"different-bus\"` means proven safe, `\"same-bus\"` a real clash, and \
+    "`verdict: \"different-bus\"` means proven safe, `\"same-bus\"` shared frame identity requiring review, and \
      `\"unknown\"` that at least one bus has no known value (uninitialised, or a symbol the \
      project carries no value for) — say so, do not guess.",
     "`depends_on_calibration: true` means the verdict rests on a parameter's value in \
@@ -171,8 +171,10 @@ pub struct CanOverlapMemberDto {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CanIdOverlapDto {
     pub can_id: u32,
+    /// Whether this overlap concerns extended rather than standard frames.
+    pub extended: bool,
     pub can_id_hex: String,
-    /// `same-bus` (a real clash), `different-bus` (proven safe — the buses
+    /// `same-bus` (shared frame identity requiring review), `different-bus` (proven safe — the buses
     /// resolve to different numbers), or `unknown` (at least one bus has no
     /// known value, so nothing is proven).
     pub verdict: String,
@@ -368,34 +370,28 @@ fn classify_bus(arg: &str, project: &Project) -> BusArg {
             calibrated: false,
         };
     }
-    // A script writes the bus symbol by its tail (`Active Bus`), while the
-    // project stores the full path (`Root.CAN.Active Bus`); match either.
+    let symbols = project.symbols();
+    let exact: Vec<_> = symbols.iter().filter(|symbol| symbol.path == arg).collect();
     let suffix = format!(".{arg}");
-    let mut kinds: BTreeSet<&'static str> = BTreeSet::new();
-    let mut values: BTreeSet<i64> = BTreeSet::new();
-    let mut is_constant = true;
-    for s in project.symbols().iter() {
-        if s.path == arg || s.path.ends_with(&suffix) {
-            kinds.insert(bus_kind_str(s.kind));
-            if let Some(v) = s.static_value.as_deref().and_then(bus_number) {
-                values.insert(v);
-                is_constant &= s.kind == SymbolKind::Constant;
-            }
-        }
-    }
-    // More than one symbol answers to this name, or they disagree on a value:
-    // resolve nothing rather than pick one.
-    let kind = match kinds.len() {
-        1 => kinds.into_iter().next().unwrap().to_string(),
-        _ => "expression".to_string(),
+    let candidates = if exact.is_empty() {
+        symbols
+            .iter()
+            .filter(|symbol| symbol.path.ends_with(&suffix))
+            .collect::<Vec<_>>()
+    } else {
+        exact
     };
-    let value = (values.len() == 1).then(|| *values.iter().next().unwrap());
+    let [symbol] = candidates.as_slice() else {
+        return BusArg {
+            kind: "expression".into(),
+            ..BusArg::default()
+        };
+    };
+    let value = symbol.static_value.as_deref().and_then(bus_number);
     BusArg {
-        kind,
+        kind: bus_kind_str(symbol.kind).into(),
         value,
-        // A constant is fixed by the project; anything else with a value got it
-        // from the current calibration.
-        calibrated: value.is_some() && !is_constant,
+        calibrated: value.is_some() && symbol.kind != SymbolKind::Constant,
     }
 }
 
@@ -552,6 +548,8 @@ pub fn inspect(
 /// snapshot. This is the entry point for consumers that attach their own load
 /// report, since the returned verdicts and that report can then describe the
 /// same loaded snapshot instead of two independent loads.
+/// The caller owns snapshot completeness, including reporting any sources omitted
+/// during loading. This function does not reread project files.
 pub fn inspect_loaded(
     project: &Project,
     scripts: &[ParsedScript],
@@ -675,14 +673,14 @@ pub fn inspect_loaded(
 /// Group messages by CAN id and judge each repeated id against the buses its
 /// messages sit on.
 fn overlaps(messages: &[CanMessageDto]) -> Vec<CanIdOverlapDto> {
-    let mut by_id: BTreeMap<u32, Vec<&CanMessageDto>> = BTreeMap::new();
+    let mut by_id: BTreeMap<(u32, bool), Vec<&CanMessageDto>> = BTreeMap::new();
     for m in messages {
         if let Some(id) = m.can_id {
-            by_id.entry(id).or_default().push(m);
+            by_id.entry((id, m.extended)).or_default().push(m);
         }
     }
     let mut out = Vec::new();
-    for (id, group) in by_id {
+    for ((id, extended), group) in by_id {
         if group.len() < 2 {
             continue;
         }
@@ -730,7 +728,7 @@ fn overlaps(messages: &[CanMessageDto]) -> Vec<CanIdOverlapDto> {
             (
                 "same-bus",
                 format!(
-                    "two or more messages with this id are on the same bus — a real CAN id clash{caveat}"
+                    "two or more messages share this frame identity and bus; review their intended use{caveat}"
                 ),
             )
         } else if undecidable {
@@ -751,6 +749,7 @@ fn overlaps(messages: &[CanMessageDto]) -> Vec<CanIdOverlapDto> {
         };
         out.push(CanIdOverlapDto {
             can_id: id,
+            extended,
             can_id_hex: format!("0x{id:X}"),
             verdict: verdict.to_string(),
             bus: shared_bus,
@@ -771,4 +770,27 @@ fn overlaps(messages: &[CanMessageDto]) -> Vec<CanIdOverlapDto> {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bus_resolution_prefers_exact_identity_and_rejects_ambiguous_suffixes() {
+        let project = Project::from_xml(r#"<MoTeCM1BuildSession><Project><ComponentStream><List>
+<Component Classname="BuiltIn.Constant" Name="Bus"><Props Type="s32" Value="1"/></Component>
+<Component Classname="BuiltIn.Constant" Name="Root.Other.Bus"><Props Type="s32" Value="2"/></Component>
+<Component Classname="BuiltIn.Constant" Name="Root.One.Port"><Props Type="s32" Value="1"/></Component>
+<Component Classname="BuiltIn.Constant" Name="Root.Two.Port"><Props Type="s32" Value="1"/></Component>
+</List></ComponentStream></Project></MoTeCM1BuildSession>"#).unwrap();
+        assert_eq!(classify_bus("Bus", &project).value, Some(1));
+        assert_eq!(classify_bus("Root.Other.Bus", &project).value, Some(2));
+        for arg in ["Port", "Missing"] {
+            let bus = classify_bus(arg, &project);
+            assert_eq!(bus.kind, "expression");
+            assert_eq!(bus.value, None);
+            assert!(!bus.calibrated);
+        }
+    }
 }

@@ -522,3 +522,146 @@ fn can_rejects_an_over_budget_project() {
     let err = m1_can::inspect(&dir.path().join("Project.m1prj"), None, 200).unwrap_err();
     assert!(err.contains("exceeds"), "unexpected error: {err}");
 }
+
+#[test]
+fn ambiguous_bus_symbols_remain_unknown_in_both_loaded_apis() {
+    for (first, second) in [
+        (
+            r#"Classname="BuiltIn.Constant" Name="Root.One.Bus"><Props Type="s32" Value="1""#,
+            r#"Classname="BuiltIn.Parameter" Name="Root.Two.Bus"><Props Type="s32""#,
+        ),
+        (
+            r#"Classname="BuiltIn.Parameter" Name="Root.One.Bus"><Props Type="s32""#,
+            r#"Classname="BuiltIn.Parameter" Name="Root.Two.Bus"><Props Type="s32""#,
+        ),
+        (
+            r#"Classname="BuiltIn.Constant" Name="Root.One.Bus"><Props Type="s32" Value="1""#,
+            r#"Classname="BuiltIn.Constant" Name="Root.Two.Bus"><Props Type="s32" Value="1""#,
+        ),
+        (
+            r#"Classname="BuiltIn.Constant" Name="Root.One.Bus"><Props Type="s32" Value="1""#,
+            r#"Classname="BuiltIn.Constant" Name="Root.Two.Bus"><Props Type="s32" Value="2""#,
+        ),
+    ] {
+        let (_dir, project_path) = can_fixture();
+        let xml = std::fs::read_to_string(&project_path).unwrap();
+        std::fs::write(
+            &project_path,
+            xml.replace(
+                "</List>",
+                &format!(
+                    "<Component {first}/></Component><Component {second}/></Component></List>"
+                ),
+            ),
+        )
+        .unwrap();
+        let (project, _) = load_can_snapshot(&project_path);
+        let scripts = m1_typecheck::parsed::parse_all(&[(
+            "CAN.CAN Init.m1scr".into(),
+            "DBC.Alpha.Init(Bus); DBC.Beta.Init(Bus);".into(),
+        )]);
+        let out = m1_can::inspect_loaded(&project, &scripts, None, 200);
+        let overlap = out
+            .id_overlaps
+            .iter()
+            .find(|item| item.can_id == 133)
+            .unwrap();
+        assert_eq!(overlap.verdict, "unknown");
+        for module in out
+            .modules
+            .iter()
+            .filter(|module| ["Alpha", "Beta"].contains(&module.name.as_str()))
+        {
+            assert_eq!(module.bus_value, None);
+            assert_eq!(module.bus_kind, "expression");
+            assert!(!module.bus_calibrated);
+        }
+        let source_bytes: Vec<_> = m1_workspace::find_dbc_files(project_path.parent().unwrap())
+            .into_iter()
+            .map(|path| {
+                let relative = path
+                    .strip_prefix(project_path.parent().unwrap())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                (relative, std::fs::read(path).unwrap())
+            })
+            .collect();
+        let sources: Vec<_> = source_bytes
+            .iter()
+            .map(|(path, bytes)| m1_can::CanDbcSource { path, bytes })
+            .collect();
+        let runtime = m1_can::runtime_model_loaded(&project, &scripts, &sources).unwrap();
+        assert!(
+            runtime
+                .modules
+                .iter()
+                .filter(|module| ["Alpha", "Beta"].contains(&module.path.as_str()))
+                .all(|module| module.bus_value.is_none() && module.bus_kind == "expression")
+        );
+    }
+}
+
+#[test]
+fn standard_and_extended_ids_form_separate_overlap_groups() {
+    let (_dir, project_path) = can_fixture();
+    let dbc_dir = project_path.parent().unwrap().join("dbc");
+    std::fs::write(
+        dbc_dir.join("Alpha.m1dbc"),
+        m1dbc("Alpha", &[("Standard", 0x123), ("Extended", 0x123)]).replacen(
+            "CANId=\"123\" DLC",
+            "CANId=\"123\" IdType=\"Extended\" DLC",
+            1,
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dbc_dir.join("Beta.m1dbc"),
+        m1dbc("Beta", &[("Standard", 0x123)]),
+    )
+    .unwrap();
+    let (project, scripts) = load_can_snapshot(&project_path);
+    let out = m1_can::inspect_loaded(&project, &scripts, Some("does not match"), 1);
+    let overlaps: Vec<_> = out
+        .id_overlaps
+        .iter()
+        .filter(|item| item.can_id == 0x123)
+        .collect();
+    assert_eq!(overlaps.len(), 1);
+    assert!(!overlaps[0].extended);
+    assert_eq!(overlaps[0].messages.len(), 2);
+    let beta = m1dbc("Beta", &[("Standard", 0x123), ("Extended", 0x123)]).replacen(
+        "CANId=\"123\" DLC",
+        "CANId=\"123\" IdType=\"Extended\" DLC",
+        1,
+    );
+    std::fs::write(dbc_dir.join("Beta.m1dbc"), beta).unwrap();
+    let (project, scripts) = load_can_snapshot(&project_path);
+    let out = m1_can::inspect_loaded(&project, &scripts, None, 200);
+    let overlaps: Vec<_> = out
+        .id_overlaps
+        .iter()
+        .filter(|item| item.can_id == 0x123)
+        .collect();
+    assert_eq!(overlaps.len(), 2);
+    assert_ne!(overlaps[0].extended, overlaps[1].extended);
+    assert!(overlaps.iter().all(|item| item.messages.len() == 2));
+}
+
+#[test]
+fn malformed_dbc_cannot_yield_a_successful_partial_cli_report() {
+    let (_dir, project_path) = can_fixture();
+    let bad = project_path.parent().unwrap().join("dbc/Broken.m1dbc");
+    std::fs::write(&bad, "<broken>").unwrap();
+    let error = m1_can::inspect(&project_path, None, 200).unwrap_err();
+    assert!(error.contains("Broken.m1dbc"), "{error}");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_m1-can"))
+        .arg("inspect")
+        .arg("--project")
+        .arg(&project_path)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("Broken.m1dbc"));
+    assert!(result.stdout.is_empty());
+}
