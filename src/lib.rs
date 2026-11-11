@@ -196,21 +196,39 @@ fn export_pair(pair: &Pair<'_>) -> Result<Outcome, String> {
     let file = m1dbc::parse_m1dbc(&bytes, pair.source_stem)
         .map_err(|e| format!("{}: {e}", pair.src.display()))?;
     let text = writer::write_dbc(&file);
-
     let target = match pair.scratch {
         Some(dir) => dir.join(format!("{}.dbc", pair.out_stem)),
         None => pair.out.to_path_buf(),
     };
+    // Check both independent count invariants before replacing a usable export.
+    // Parseable output can still contain missing or extra frames/signals.
+    let preflight =
+        roundtrip::roundtrip_counts(&text).map_err(|e| format!("{}: {e}", target.display()))?;
+    let written = (
+        file.messages.len(),
+        file.messages.iter().map(|m| m.signals.len()).sum::<usize>(),
+    );
+    let source_counts = (
+        file.totals.convertible_messages,
+        file.totals.convertible_signals,
+    );
+    if written != source_counts || preflight != written {
+        println!("=== {} ===", pair.out_stem);
+        if written != source_counts {
+            println!("  !! written .dbc count != convertible source count");
+        }
+        if preflight != written {
+            println!("  !! round-trip mismatch vs written .dbc");
+        }
+        println!("  !! existing export preserved; generated counts failed verification");
+        return Ok(Outcome::Mismatch);
+    }
     write_export(&target, &text)?;
 
     // Read the file back rather than verifying the string that was meant to go
     // in it: the round-trip is a check on the artifact a consumer will open.
     let written_text =
         m1_workspace::read_text(&target).map_err(|e| format!("{}: {e}", target.display()))?;
-    let written = (
-        file.messages.len(),
-        file.messages.iter().map(|m| m.signals.len()).sum::<usize>(),
-    );
     let round_tripped = roundtrip::roundtrip_counts(&written_text)
         .map_err(|e| format!("{}: {e}", target.display()))?;
 
