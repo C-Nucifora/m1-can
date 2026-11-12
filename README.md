@@ -59,7 +59,13 @@ when their `Init` calls bind them to different buses. `inspect` resolves literal
 buses, project constants, and parameter values from `parameters.m1cfg`, and
 marks verdicts that depend on calibration because a retune can change them.
 Uninitialised modules and unresolved expressions remain `unknown` rather than
-being guessed.
+being guessed. Local and `expand` names anywhere in a function remain unknown,
+including forward references and declarations in branches. Function inputs also
+remain unknown. Bare names that may match an interpolated local name also remain
+unknown; this check does not enumerate expansion bounds. Literal buses and fully
+qualified project paths remain distinguishable. Project-symbol arguments must resolve in the script's scope and
+have a unique project identity for their written spelling; equal argument text
+alone does not establish a shared binding.
 
 ## Configuration
 
