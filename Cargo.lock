@@ -258,13 +258,13 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "m1-can"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "can-dbc",
  "clap",
  "m1-core",
  "m1-typecheck",
- "m1-workspace 0.14.1",
+ "m1-workspace",
  "roxmltree",
  "schemars",
  "serde",
@@ -275,34 +275,35 @@ dependencies = [
 
 [[package]]
 name = "m1-core"
-version = "0.15.0"
-source = "git+https://github.com/C-Nucifora/m1-core.git?tag=v0.15.0#1fe6f9ad4d6a0479c5cfeb770270fab0f89e8f89"
+version = "0.15.1"
+source = "git+https://github.com/C-Nucifora/m1-core.git?tag=v0.15.1#e581c96c4c220a2eca1c04b41befc009d8c4264f"
 dependencies = [
  "tree-sitter",
  "tree-sitter-m1",
 ]
 
 [[package]]
-name = "m1-typecheck"
-version = "0.51.0"
-source = "git+https://github.com/C-Nucifora/m1-typecheck.git?tag=v0.51.0#e79bd0e4686cae078b1f96a728f2f94affc3ede4"
+name = "m1-project"
+version = "0.16.0"
+source = "git+https://github.com/nedlane/m1-project.git?tag=v0.16.0#ad3016ce14fda28b43f83997dc7cc3cbf5a9b1fb"
 dependencies = [
  "clap",
- "m1-core",
- "m1-workspace 0.13.0",
+ "m1-workspace",
  "roxmltree",
- "serde",
- "serde_json",
- "toml",
 ]
 
 [[package]]
-name = "m1-workspace"
-version = "0.13.0"
-source = "git+https://github.com/nedlane/m1-workspace.git?tag=v0.13.0#cf1b5b862d255cc4ecb89a7b708016bd9a9f33db"
+name = "m1-typecheck"
+version = "0.52.0"
+source = "git+https://github.com/C-Nucifora/m1-typecheck.git?tag=v0.52.0#d63f2cc39ad04586ae2ad2fcc8e244f24cb6f8d0"
 dependencies = [
+ "clap",
+ "m1-core",
+ "m1-project",
+ "m1-workspace",
+ "roxmltree",
  "serde",
- "serde_ignored",
+ "serde_json",
  "toml",
 ]
 
@@ -564,9 +565,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.1.2"
+version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
+checksum = "9c187e0a369471c550af028cba56d4f4fa2a489ad28151ae95a4d340a2a8b782"
 dependencies = [
  "serde_core",
 ]
@@ -646,9 +647,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.8+spec-1.1.0"
+version = "1.2.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
+checksum = "d5755c51863cdac711f1956baf8eb9588e060755f7d3c4c979e70ea1e1f32cd7"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -661,9 +662,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
+checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
 dependencies = [
  "serde_core",
 ]
@@ -679,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "toml_writer"
-version = "1.1.3+spec-1.1.0"
+version = "1.2.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
+checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "tree-sitter"
@@ -705,8 +706,8 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-m1"
-version = "0.8.0"
-source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.8.0#e9dbd45be91c0771105637924a2c5c87ae17c1fb"
+version = "0.8.1"
+source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.8.1#4512305f8efda1c624f4b0867beb35a1fbd666db"
 dependencies = [
  "cc",
  "tree-sitter-language",

@@ -144,6 +144,42 @@ fn generation_writes_the_export_and_reports_the_counts() {
 }
 
 #[test]
+fn injected_frame_in_unit_is_rejected_before_replacing_the_export() {
+    let root = sample_repo("preflight-count-mismatch");
+    let source = r#"<ComponentStream><List>
+<Component Classname="BuiltIn.CAN.Message" Name="Sample DBC.Status">
+  <Props CANId="100" DLC="8"/>
+</Component>
+<Component Classname="BuiltIn.CAN.Signal" Name="Sample DBC.Status.Value">
+  <Props StartBit="0" Length="8">
+    <Locale><Default Unit="&quot; Vector__XXX&#10;&#10;BO_ 2047 Extra: 8 Vector__XXX&#10; SG_ Extra : 0|8@1+ (1,0) [0|0] &quot;"/></Locale>
+  </Props>
+</Component>
+</List></ComponentStream>"#;
+    std::fs::write(root.join("src/Sample DBC.m1dbc"), source).unwrap();
+    std::fs::create_dir(root.join("dbc")).unwrap();
+    let target = root.join("dbc/Sample.dbc");
+    let previous = b"previous usable export\n";
+    std::fs::write(&target, previous).unwrap();
+
+    let out = export_dbc(&root, &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid unit must fail before generating an export: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), previous);
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("Unit contains an unsupported trailing backslash or control character"),
+        "input validation must reject the injected extra frame"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn check_passes_against_a_freshly_generated_export() {
     let root = sample_repo("check_in_sync");
     assert!(export_dbc(&root, &[]).status.success(), "generation failed");
